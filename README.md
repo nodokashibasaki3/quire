@@ -1,6 +1,6 @@
-# Quire
+# quire
 
-A minimal daily-planning app for macOS that lives in your menu bar and gets out of your way.
+A minimal daily todo list app for macOS that uses vim, markdown format, Canvas integration and automatically carries forward incomplete tasks from yesterday.
 
 ## What it does
 
