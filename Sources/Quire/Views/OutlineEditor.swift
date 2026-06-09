@@ -340,13 +340,36 @@ struct OutlineEditor: NSViewRepresentable {
                 // for editing/saving.
                 let lhs = NSRange(location: outer.location, length: 2)
                 let rhs = NSRange(location: outer.upperBound - 2, length: 2)
-                storage.addAttribute(.font, value: Self.hiddenFont, range: lhs)
-                storage.addAttribute(.font, value: Self.hiddenFont, range: rhs)
-                storage.addAttribute(.foregroundColor, value: NSColor.clear, range: lhs)
-                storage.addAttribute(.foregroundColor, value: NSColor.clear, range: rhs)
+                self.hideRange(lhs, in: storage)
+                self.hideRange(rhs, in: storage)
+            }
+
+            // Inline: [text](url) — visible label is accent-colored + underlined; the brackets,
+            // closing `](url)` are hidden so the line reads as just the label.
+            self.applyInline(pattern: #"\[([^\]\n]+?)\]\(([^)\n]+?)\)"#, in: storage) { match in
+                let outer = match.range
+                let textRange = match.range(at: 1)
+
+                storage.addAttribute(.foregroundColor, value: Self.accent, range: textRange)
+                storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: textRange)
+                storage.addAttribute(.underlineColor, value: Self.accent, range: textRange)
+
+                // Hide the leading `[`.
+                self.hideRange(NSRange(location: outer.location, length: 1), in: storage)
+                // Hide everything from `]` through the closing `)`.
+                let suffixStart = textRange.upperBound
+                let suffixLength = outer.upperBound - suffixStart
+                if suffixLength > 0 {
+                    self.hideRange(NSRange(location: suffixStart, length: suffixLength), in: storage)
+                }
             }
 
             storage.endEditing()
+        }
+
+        private func hideRange(_ range: NSRange, in storage: NSTextStorage) {
+            storage.addAttribute(.font, value: Self.hiddenFont, range: range)
+            storage.addAttribute(.foregroundColor, value: NSColor.clear, range: range)
         }
 
         private func styleLine(_ line: String, range lineRange: NSRange, storage: NSTextStorage) {
@@ -481,6 +504,36 @@ final class OutlineTextView: NSTextView {
             return true
         }
         return super.performKeyEquivalent(with: event)
+    }
+
+    /// Smart paste: if the clipboard holds a URL AND there's a non-empty selection, wrap the
+    /// selection as `[selection](url)`. Otherwise, defer to the normal paste behavior.
+    override func paste(_ sender: Any?) {
+        let sel = selectedRange()
+        if sel.length > 0,
+           let raw = NSPasteboard.general.string(forType: .string),
+           let url = Self.linkURLString(from: raw) {
+            let selectedText = (string as NSString).substring(with: sel)
+            let wrapped = "[\(selectedText)](\(url))"
+            guard shouldChangeText(in: sel, replacementString: wrapped) else { return }
+            replaceCharacters(in: sel, with: wrapped)
+            didChangeText()
+            let cursorPos = sel.location + (wrapped as NSString).length
+            setSelectedRange(NSRange(location: cursorPos, length: 0))
+            return
+        }
+        super.paste(sender)
+    }
+
+    /// Returns the trimmed URL string if `raw` looks like a single URL (http/https), nil otherwise.
+    private static func linkURLString(from raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.contains("\n"), !trimmed.contains(" "), !trimmed.contains(")") else {
+            return nil
+        }
+        let lower = trimmed.lowercased()
+        guard lower.hasPrefix("http://") || lower.hasPrefix("https://") else { return nil }
+        return trimmed
     }
 
     private func toggleMarkdownBold() {
